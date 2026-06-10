@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias=\"@/*\" --yes)",
+      "Bash(npm --version)",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//Users/abhishek729/.nvm/versions/**)",
+      "Read(//opt/**)",
+      "Bash(brew --version)",
+      "Bash(sw_vers)",
+      "Bash(xcode-select -p)",
+      "Bash(curl --version)",
+      "Bash(curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh)",
+      "Bash(bash)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s \"http://localhost:3000/api/webhook?hub.mode=subscribe&hub.verify_token=priyaHRBot2024&hub.challenge=testchallenge123\")",
+      "Bash(curl -s http://localhost:3000/api/settings)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://localhost:3000/api/questions)"
+    ]
+  }
+}
