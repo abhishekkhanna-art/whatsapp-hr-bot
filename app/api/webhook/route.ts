@@ -37,13 +37,12 @@ export async function POST(req: NextRequest) {
 
           const contact = value.contacts?.find((c) => c.wa_id === msg.from);
 
-          // Don't await - return 200 fast to Meta, process async
-          handleIncomingMessage({
+          await handleIncomingMessage({
             phoneNumber: msg.from,
             contactName: contact?.profile?.name,
             messageText: msg.text.body,
             metaMessageId: msg.id,
-          }).catch(console.error);
+          });
         }
       }
     }
