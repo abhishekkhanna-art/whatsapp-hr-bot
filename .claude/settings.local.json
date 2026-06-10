@@ -31,7 +31,8 @@
       "Bash(git push *)",
       "Skill(deep-research)",
       "Bash(curl -s \"https://whatsapp-hr-bot.vercel.app/api/webhook?hub.mode=subscribe&hub.verify_token=priyaHRBot2024&hub.challenge=testchallenge999\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "WebFetch(domain:claude.ai)"
     ]
   }
 }

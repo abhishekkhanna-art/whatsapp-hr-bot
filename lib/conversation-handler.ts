@@ -6,9 +6,11 @@ import {
   conversationAnswers,
   settings,
 } from "./db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 import { generateReply, generateSummary, extractAnswer } from "./ai";
 import { sendWhatsAppMessage } from "./whatsapp";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function handleIncomingMessage({
   phoneNumber,
@@ -48,13 +50,17 @@ export async function handleIncomingMessage({
       .where(eq(conversations.id, conversation.id));
   }
 
-  // Save incoming message
-  await db.insert(messages).values({
-    conversationId: conversation.id,
-    role: "user",
-    content: messageText,
-    metaMessageId,
-  });
+  // Save incoming message (unprocessed)
+  const [savedMsg] = await db
+    .insert(messages)
+    .values({
+      conversationId: conversation.id,
+      role: "user",
+      content: messageText,
+      metaMessageId,
+      isProcessed: false,
+    })
+    .returning();
 
   // Update last message time
   await db
@@ -62,20 +68,65 @@ export async function handleIncomingMessage({
     .set({ lastMessageAt: new Date() })
     .where(eq(conversations.id, conversation.id));
 
+  // --- DEBOUNCE: wait 3s, then check if we're still the latest message ---
+  await sleep(3000);
+
+  const [latestMsg] = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversation.id),
+        eq(messages.role, "user")
+      )
+    )
+    .orderBy(desc(messages.timestamp))
+    .limit(1);
+
+  // If a newer message came in while we were waiting, let that one handle the reply
+  if (latestMsg && latestMsg.id !== savedMsg.id) {
+    return;
+  }
+
+  // Gather all unprocessed user messages to batch them into context
+  const unprocessedMsgs = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversation.id),
+        eq(messages.role, "user"),
+        eq(messages.isProcessed, false)
+      )
+    )
+    .orderBy(asc(messages.timestamp));
+
+  const batchedText = unprocessedMsgs.map((m) => m.content).join("\n");
+
+  // Mark all as processed
+  for (const m of unprocessedMsgs) {
+    await db
+      .update(messages)
+      .set({ isProcessed: true })
+      .where(eq(messages.id, m.id));
+  }
+
   // Get bot settings
   const [botSettings] = await db.select().from(settings).limit(1);
 
-  // If it's a brand new conversation, send welcome message first
+  // If brand new conversation, send welcome message first
   if (isNew && botSettings?.welcomeMessage) {
+    await sleep(1500);
     await sendWhatsAppMessage(phoneNumber, botSettings.welcomeMessage);
     await db.insert(messages).values({
       conversationId: conversation.id,
       role: "assistant",
       content: botSettings.welcomeMessage,
+      isProcessed: true,
     });
   }
 
-  // Get conversation history (last 30 messages for context)
+  // Get conversation history (last 30 messages)
   const history = await db
     .select()
     .from(messages)
@@ -83,14 +134,13 @@ export async function handleIncomingMessage({
     .orderBy(asc(messages.timestamp))
     .limit(30);
 
-  // Get active questions
+  // Get active questions not yet answered
   const allQuestions = await db
     .select()
     .from(questions)
     .where(eq(questions.isActive, true))
     .orderBy(asc(questions.orderIndex));
 
-  // Find questions already answered for this conversation
   const answeredRecords = await db
     .select()
     .from(conversationAnswers)
@@ -108,26 +158,29 @@ export async function handleIncomingMessage({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    pendingQuestions: pendingQuestions.map((q) => ({
-      id: q.id,
-      text: q.text,
-    })),
-    latestUserMessage: messageText,
+    pendingQuestions: pendingQuestions.map((q) => ({ id: q.id, text: q.text })),
+    latestUserMessage: batchedText,
   });
 
-  // Save AI reply
+  // Natural typing delay: ~60 words per minute, min 1.5s max 4s
+  const wordCount = reply.split(" ").length;
+  const typingDelay = Math.min(Math.max(wordCount * 60, 1500), 4000);
+  await sleep(typingDelay);
+
+  // Save and send reply
   await db.insert(messages).values({
     conversationId: conversation.id,
     role: "assistant",
     content: reply,
+    isProcessed: true,
   });
 
-  // Record any answers extracted
+  await sendWhatsAppMessage(phoneNumber, reply);
+
+  // Extract and save answers
   if (answeredQuestionIds.length > 0) {
     const recentMessages = history.slice(-6);
-    const snippet = recentMessages
-      .map((m) => `${m.role}: ${m.content}`)
-      .join("\n");
+    const snippet = recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n");
 
     for (const qId of answeredQuestionIds) {
       const question = allQuestions.find((q) => q.id === qId);
@@ -144,10 +197,7 @@ export async function handleIncomingMessage({
     }
   }
 
-  // Send reply via WhatsApp
-  await sendWhatsAppMessage(phoneNumber, reply);
-
-  // Async summary update every 10 messages
+  // Regenerate summary every 10 messages
   const totalMessages = history.length + 1;
   if (totalMessages % 10 === 0) {
     const allMessages = await db
