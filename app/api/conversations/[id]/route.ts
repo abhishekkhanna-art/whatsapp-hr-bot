@@ -11,13 +11,14 @@ import { generateSummary } from "@/lib/ai";
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const [conversation] = await db
       .select()
       .from(conversations)
-      .where(eq(conversations.id, params.id))
+      .where(eq(conversations.id, id))
       .limit(1);
 
     if (!conversation) {
@@ -27,7 +28,7 @@ export async function GET(
     const msgs = await db
       .select()
       .from(messages)
-      .where(eq(messages.conversationId, params.id))
+      .where(eq(messages.conversationId, id))
       .orderBy(asc(messages.timestamp));
 
     const answers = await db
@@ -40,7 +41,7 @@ export async function GET(
       })
       .from(conversationAnswers)
       .leftJoin(questions, eq(questions.id, conversationAnswers.questionId))
-      .where(eq(conversationAnswers.conversationId, params.id));
+      .where(eq(conversationAnswers.conversationId, id));
 
     return NextResponse.json({ conversation, messages: msgs, answers });
   } catch (error) {
@@ -51,17 +52,17 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await req.json();
 
-    // Regenerate summary on demand
     if (body.action === "summarize") {
       const msgs = await db
         .select()
         .from(messages)
-        .where(eq(messages.conversationId, params.id))
+        .where(eq(messages.conversationId, id))
         .orderBy(asc(messages.timestamp));
 
       const summary = await generateSummary(
@@ -74,7 +75,7 @@ export async function PATCH(
       const [updated] = await db
         .update(conversations)
         .set({ summary })
-        .where(eq(conversations.id, params.id))
+        .where(eq(conversations.id, id))
         .returning();
 
       return NextResponse.json(updated);
